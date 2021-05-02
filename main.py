@@ -81,17 +81,23 @@ def update_power():
   screen.battery_status(voltage, current)
   send('P:' + str(voltage) + ',' + str(current))
 
+
+startup_time = utime.ticks_ms()
 off_received = -1
 OFF_TIMEOUT_SECONDS = 30
 def turn_off():
-  global off_received
-  send('OFF')
-  off_received = utime.ticks_ms()
-  screen.off_in_seconds(OFF_TIMEOUT_SECONDS)
-  print('turning off')
+  global off_received, startup_time
+  print('off_button')
+  if off_received == -1 and utime.ticks_diff(utime.ticks_ms(), startup_time) > 3000:
+    send('OFF')
+    off_received = utime.ticks_ms()
+    screen.off_in_seconds(OFF_TIMEOUT_SECONDS)
+    print('turning off')
 
-power_button = Pin(7, Pin.IN, Pin.PULL_DOWN)
-power_button.irq(turn_off, Pin.IRQ_RISING)
+power_button = Pin(7, Pin.IN)
+power_button.irq(lambda pin: turn_off(), Pin.IRQ_RISING)
+off_pin = Pin(6, Pin.OUT, Pin.PULL_DOWN)
+off_pin.low()
 
 report_deadline = utime.ticks_add(utime.ticks_ms(), 200)
 while True:
@@ -113,10 +119,9 @@ while True:
       print('Disabled motors due to inactivity')
 
   if off_received != -1:
-    off_elapsed = utime.ticks_diff(utime.ticks_ms(), off_received) / 1000
+    off_elapsed = round(utime.ticks_diff(utime.ticks_ms(), off_received) / 1000)
     screen.off_in_seconds(OFF_TIMEOUT_SECONDS - off_elapsed)
-    if off_elapsed >= OFF_TIMEOUT_SECONDS:
-      off_pin = Pin(6, Pin.OUT)
+    if off_elapsed >= OFF_TIMEOUT_SECONDS:  
       off_pin.high()
 
   utime.sleep_us(100)
