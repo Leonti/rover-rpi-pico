@@ -21,8 +21,6 @@ m2 = Stepper(1, 20, 21)
 motors_en = Pin(22, Pin.OUT)
 motors_en.high()
 
-buffer=b''
-
 def send(message):
   uart.write(bytes(message + '\n', 'utf-8'))
 
@@ -32,7 +30,7 @@ def parse_speed(s):
   except ValueError:
     return None
 
-last_keepalive = 0
+last_keepalive = -1
 last_speed = 0
 motors_enabled = False
 
@@ -50,7 +48,8 @@ def set_speed(enable, m1_steps_per_second, m2_steps_per_second):
 def on_command(command):
   global last_keepalive, last_speed
   print(command)
-  send(command)
+  print('-----')
+#  send(command)
   split_command = command.split(':', 1)
   command_type = split_command[0]
 
@@ -61,7 +60,6 @@ def on_command(command):
   # C1:1,1000,1000
   if command_type == 'C1' and len(split_command) == 2:  
     speeds = split_command[1].split(',')
-    print(split_command[1])
     if len(speeds) == 3:
       enable = parse_speed(speeds[0])
       m1_steps_per_second = parse_speed(speeds[1])
@@ -95,28 +93,37 @@ def turn_off():
     print('turning off')
 
 power_button = Pin(7, Pin.IN)
-power_button.irq(lambda pin: turn_off(), Pin.IRQ_RISING)
+#power_button.irq(handler=turn_off, trigger=Pin.IRQ_RISING)
 off_pin = Pin(6, Pin.OUT, Pin.PULL_DOWN)
 off_pin.low()
 
 report_deadline = utime.ticks_add(utime.ticks_ms(), 200)
+buffer=b''
+
+def find_commands(current_buffer):
+  commands = current_buffer.split(b'\n')
+  return (commands[0:-1], commands[-1])  
+
 while True:
   if uart.any() > 0:
-    c = uart.read(1)
-    if c == b'\n' and len(buffer) > 0:
-      on_command(buffer.decode('utf-8'))
-      buffer = b''
-    elif len(buffer) > 0 or (len(buffer) == 0 and c == b'C'):
-      buffer += c
+    recv = uart.read()
+    if recv is not None:
+      (commands, remaining) = find_commands(recv)
+      buffer = remaining
+      for command in commands:
+        on_command(command.decode('utf-8'))
 
   if utime.ticks_diff(report_deadline, utime.ticks_ms()) < 0:
     report_deadline = utime.ticks_add(utime.ticks_ms(), 1000)
     update_power()
-    is_connected = utime.ticks_diff(utime.ticks_ms(), last_keepalive) < 2000
+    is_connected = last_keepalive != -1 and utime.ticks_diff(utime.ticks_ms(), last_keepalive) < 2000
     screen.connected_status(is_connected)
     if motors_enabled and (utime.ticks_diff(utime.ticks_ms(), last_speed) > 2000 or not is_connected):
       set_speed(False, 0, 0)
       print('Disabled motors due to inactivity')
+
+  if power_button.value() == 1:
+    turn_off()
 
   if off_received != -1:
     off_elapsed = round(utime.ticks_diff(utime.ticks_ms(), off_received) / 1000)
@@ -124,4 +131,4 @@ while True:
     if off_elapsed >= OFF_TIMEOUT_SECONDS:  
       off_pin.high()
 
-  utime.sleep_us(100)
+  utime.sleep_ms(2)
