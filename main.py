@@ -33,6 +33,7 @@ def parse_speed(s):
 last_keepalive = -1
 last_speed = 0
 motors_enabled = False
+last_bumper_trigger = utime.ticks_ms()
 
 def set_speed(enable, m1_steps_per_second, m2_steps_per_second):
   global motors_en, m1, m2, motors_enabled
@@ -42,8 +43,12 @@ def set_speed(enable, m1_steps_per_second, m2_steps_per_second):
   else:
     motors_en.high()
     motors_enabled = False
-  m1.set_steps_per_second(m1_steps_per_second)
-  m2.set_steps_per_second(m2_steps_per_second)
+
+  if (m1_steps_per_second != 0 or m2_steps_per_second != 0) and utime.ticks_diff(utime.ticks_ms(), last_bumper_trigger) < 200:
+    print("Ignoring set_speed while processing bumper")
+  else: 
+    m1.set_steps_per_second(m1_steps_per_second)
+    m2.set_steps_per_second(m2_steps_per_second)
 
 def on_command(command):
   global last_keepalive, last_speed
@@ -73,12 +78,14 @@ def on_command(command):
     last_keepalive = utime.ticks_ms()
 
 def update_power():
-  global screen, uart
+  global screen
   voltage = ina.bus_voltage
   current = ina.current
   screen.battery_status(voltage, current)
   send('P:' + str(voltage) + ',' + str(current))
 
+def send_bumpers(left, right):
+  send('B:' + str(1 if left else 0) + ',' + str(1 if right else 0))  
 
 startup_time = utime.ticks_ms()
 off_received = -1
@@ -97,6 +104,54 @@ power_button = Pin(7, Pin.IN)
 off_pin = Pin(6, Pin.OUT, Pin.PULL_DOWN)
 off_pin.low()
 
+class Bumper():
+  def __init__(self, pin, on_start, on_end):
+    pin.irq(handler=self.cb, trigger=Pin.IRQ_RISING)
+    self.pin = pin
+    self.triggered = None
+    self.on_start = on_start
+    self.on_end = on_end
+
+  def cb(self, pin):
+    if self.triggered is None:
+      self.triggered = utime.ticks_ms()
+      self.on_start()
+
+  def update(self):
+    if self.triggered is not None and utime.ticks_diff(utime.ticks_ms(), self.triggered) > 30 and self.pin.value() == 0:
+      self.triggered = None
+      self.on_end()
+
+to_report_bumper_start_left = False
+to_report_bumper_start_right = False
+to_report_bumper_end_left = False
+to_report_bumper_end_right = False
+
+def on_start_left():
+  global to_report_bumper_start_left, last_bumper_trigger
+  set_speed(True, 0, 0)
+  to_report_bumper_start_left = True
+  last_bumper_trigger = utime.ticks_ms()
+
+def on_start_right():
+  global to_report_bumper_start_right, last_bumper_trigger
+  set_speed(True, 0, 0)
+  to_report_bumper_start_right = True
+  last_bumper_trigger = utime.ticks_ms()
+
+def on_bumper_end_left():
+  global to_report_bumper_end_left
+  print("On bumper end left")
+  to_report_bumper_end_left = True
+
+def on_bumper_end_right():
+  global to_report_bumper_end_right
+  print("On bumper end left")
+  to_report_bumper_end_right = True
+
+bumper_left = Bumper(Pin(2, Pin.IN, Pin.PULL_DOWN), on_start_left, on_bumper_end_left)
+bumper_right = Bumper(Pin(3, Pin.IN, Pin.PULL_DOWN), on_start_right, on_bumper_end_right)
+
 report_deadline = utime.ticks_add(utime.ticks_ms(), 200)
 buffer=b''
 
@@ -112,6 +167,9 @@ while True:
       buffer = remaining
       for command in commands:
         on_command(command.decode('utf-8'))
+
+  bumper_left.update()
+  bumper_right.update()
 
   if utime.ticks_diff(report_deadline, utime.ticks_ms()) < 0:
     report_deadline = utime.ticks_add(utime.ticks_ms(), 1000)
@@ -130,5 +188,17 @@ while True:
     screen.off_in_seconds(OFF_TIMEOUT_SECONDS - off_elapsed)
     if off_elapsed >= OFF_TIMEOUT_SECONDS:  
       off_pin.high()
+
+  if to_report_bumper_start_left or to_report_bumper_start_right:
+    send_bumpers(bumper_left.triggered is not None, bumper_right.triggered is not None)
+    to_report_bumper_start_left = False
+    to_report_bumper_start_right = False
+    screen.bumper_status(bumper_left.triggered is not None, bumper_right.triggered is not None)
+
+  if to_report_bumper_end_left or to_report_bumper_end_right:
+    send_bumpers(bumper_left.triggered is not None, bumper_right.triggered is not None)
+    to_report_bumper_end_left = False
+    to_report_bumper_end_right = False
+    screen.bumper_status(bumper_left.triggered is not None, bumper_right.triggered is not None)
 
   utime.sleep_ms(2)

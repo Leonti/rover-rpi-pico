@@ -37,7 +37,15 @@ def off_in_seconds(remaining_seconds):
   off_message = 'OFF in: {0:d}s'.format(remaining_seconds)
   oled.fill_rect(5, 25, 123, 8, 0)
   oled.text(off_message, 5, 25)
-  oled.show()  
+  oled.show()
+
+def bumper_status(left, right):
+  left_msg = 'L' if left else ' '
+  right_msg = 'R' if right else ' '
+  bumper_message = '{0} {1}'.format(left_msg, right_msg)
+  oled.fill_rect(5, 35, 123, 8, 0)
+  oled.text(bumper_message, 5, 35)
+  oled.show()   
 
 def custom_message(message):
   oled.fill_rect(5, 55, 120, 8, 0)
